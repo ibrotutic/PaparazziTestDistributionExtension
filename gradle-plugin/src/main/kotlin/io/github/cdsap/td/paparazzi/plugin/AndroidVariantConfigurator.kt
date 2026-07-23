@@ -2,6 +2,9 @@ package io.github.cdsap.td.paparazzi.plugin
 
 import com.android.build.api.variant.AndroidComponentsExtension
 import org.gradle.api.Project
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.testing.Test
 
@@ -38,6 +41,7 @@ internal object AndroidVariantConfigurator {
             project.tasks.withType(Test::class.java).configureEach { testTask ->
                 if (testTask.name == testTaskName) {
                     wireTestTask(testTask, mergeTask, inputReportDirPath)
+                    registerPaparazziInputs(project, testTask, variant.name)
                 }
             }
         }
@@ -61,6 +65,64 @@ internal object AndroidVariantConfigurator {
         testTask.finalizedBy(mergeTask)
     }
 
+    /**
+     * Registers files Paparazzi reads at runtime as named inputs of the unit-test task so
+     * Test Distribution transfers them to remote agents. Paparazzi wires them only as task
+     * dependencies or system-property paths, which TD does not transfer:
+     *
+     *  1. `intermediates/paparazzi/<variant>` — resources metadata written by
+     *     `preparePaparazziResources`, wired only as a task dependency.
+     *  2. `layoutlibResources` — the layoutlib runtime, passed only as a systemProperty path.
+     *  3. Exploded resource dirs of external AAR dependencies — needed e.g. for vector
+     *     drawables to render on agents.
+     *
+     * [variantName] must be the raw camelCase variant name (e.g. `freeDebug`) so both
+     * `intermediates/paparazzi/<variant>` and `<variant>RuntimeClasspath` resolve for
+     * flavored variants.
+     */
+    internal fun registerPaparazziInputs(
+        project: Project,
+        testTask: Test,
+        variantName: String,
+    ) {
+        testTask.inputs.dir(
+            project.layout.buildDirectory.dir("intermediates/paparazzi/$variantName")
+        )
+            .withPropertyName(PAPARAZZI_INTERMEDIATES_INPUT_PROPERTY)
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+
+        project.configurations.findByName(LAYOUTLIB_RESOURCES_CONFIGURATION)?.let { configuration ->
+            val layoutlibDirs = configuration.incoming.artifactView { view ->
+                view.attributes.attribute(
+                    ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE,
+                    ArtifactTypeDefinition.DIRECTORY_TYPE
+                )
+            }.files
+            testTask.inputs.files(layoutlibDirs)
+                .withPropertyName(PAPARAZZI_LAYOUTLIB_INPUT_PROPERTY)
+                .withPathSensitivity(PathSensitivity.NONE)
+        }
+
+        project.configurations.findByName("${variantName}RuntimeClasspath")?.let { configuration ->
+            val aarResDirs = configuration.incoming.artifactView { view ->
+                view.attributes.attribute(
+                    ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE,
+                    ANDROID_RES_ARTIFACT_TYPE
+                )
+                view.lenient(true)
+                view.componentFilter { id -> id !is ProjectComponentIdentifier }
+            }.files
+            testTask.inputs.files(aarResDirs)
+                .withPropertyName(PAPARAZZI_AAR_RES_INPUT_PROPERTY)
+                .withPathSensitivity(PathSensitivity.NONE)
+        }
+    }
+
     internal const val TD_REPORT_DIR_SYSTEM_PROPERTY = "paparazzi.td.report.dir"
     internal const val DEFAULT_INPUT_REPORT_DIR = "build/reports/paparazzi"
+    internal const val PAPARAZZI_INTERMEDIATES_INPUT_PROPERTY = "paparazzi.td.intermediates"
+    internal const val PAPARAZZI_LAYOUTLIB_INPUT_PROPERTY = "paparazzi.layoutlib.resources"
+    internal const val PAPARAZZI_AAR_RES_INPUT_PROPERTY = "paparazzi.aar.resource.dirs"
+    internal const val LAYOUTLIB_RESOURCES_CONFIGURATION = "layoutlibResources"
+    internal const val ANDROID_RES_ARTIFACT_TYPE = "android-res"
 }

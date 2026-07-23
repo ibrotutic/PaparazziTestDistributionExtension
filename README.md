@@ -101,6 +101,17 @@ both target the same directory. Override `inputReportDir` to relocate the per-ex
 `build/reports/paparazzi`). The merged report location is controlled separately by
 `outputReportDir`.
 
+The plugin also registers the extra test-task inputs Test Distribution needs to
+transfer Paparazzi's runtime files to remote agents: the
+`build/intermediates/paparazzi/<variant>` metadata directory written by
+`preparePaparazziResources` (input property `paparazzi.td.intermediates`), the
+layoutlib runtime resolved from the `layoutlibResources` configuration
+(`paparazzi.layoutlib.resources`), and the exploded resource directories of external
+AAR dependencies (`paparazzi.aar.resource.dirs`, needed e.g. for vector drawables to
+render on agents). Paparazzi wires these only as task dependencies or system-property
+paths, so without these declared inputs remote agents would be missing the files. No
+manual `inputs` wiring is required.
+
 ### Option 2: Manual setup
 
 Add the library dependency:
@@ -124,6 +135,10 @@ tasks.withType<Test>().configureEach {
     }
 }
 ```
+
+With manual setup you must also register the layoutlib runtime and the external AAR
+resource directories as test inputs yourself — the plugin (Option 1) does all of this
+automatically.
 
 ## Output
 
